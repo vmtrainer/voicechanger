@@ -112,7 +112,7 @@
     <button id="toggleBtn">Activar micrófono</button>
 
     <div class="presets">
-      <button data-pitch="-12" id="btnGrave">Voz Grave</button>
+      <button data-pitch="-7" id="btnGrave">Voz Grave</button>
       <button data-pitch="0" id="btnNormal" class="selected">Normal</button>
       <button data-pitch="12" id="btnAguda">Voz Aguda</button>
     </div>
@@ -131,8 +131,11 @@
 
 <script src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
 <script>
-  let mic = null;
+  let micStream = null;
+  let micSourceNode = null;
   let pitchShift = null;
+  let eq = null;
+  let limiter = null;
   let started = false;
 
   const toggleBtn = document.getElementById('toggleBtn');
@@ -147,15 +150,31 @@
 
   async function startMic() {
     await Tone.start();
-    pitchShift = new Tone.PitchShift({ pitch: Number(slider.value) }).toDestination();
-    mic = new Tone.UserMedia();
-    await mic.open();
-    mic.connect(pitchShift);
+
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: false,
+      }
+    });
+
+    pitchShift = new Tone.PitchShift({ pitch: Number(slider.value), windowSize: 0.12 });
+    eq = new Tone.EQ3({ low: -2, mid: 2, high: 3 });
+    limiter = new Tone.Limiter(-3).toDestination();
+
+    micSourceNode = Tone.getContext().rawContext.createMediaStreamSource(micStream);
+    Tone.connect(micSourceNode, pitchShift);
+    pitchShift.connect(eq);
+    eq.connect(limiter);
   }
 
   function stopMic() {
-    if (mic) { mic.close(); mic.dispose(); mic = null; }
+    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    micSourceNode = null;
     if (pitchShift) { pitchShift.dispose(); pitchShift = null; }
+    if (eq) { eq.dispose(); eq = null; }
+    if (limiter) { limiter.dispose(); limiter = null; }
   }
 
   toggleBtn.addEventListener('click', async () => {
@@ -186,16 +205,26 @@
     }
   });
 
-  function setPitch(semitones) {
+  let pitchDebounce = null;
+
+  function setPitch(semitones, { immediate = true } = {}) {
     slider.value = semitones;
     pitchValue.textContent = semitones;
-    if (pitchShift) pitchShift.pitch = semitones;
     presetButtons.forEach(btn => {
       btn.classList.toggle('selected', Number(btn.dataset.pitch) === Number(semitones));
     });
+
+    if (!pitchShift) return;
+
+    if (immediate) {
+      pitchShift.pitch = semitones;
+    } else {
+      clearTimeout(pitchDebounce);
+      pitchDebounce = setTimeout(() => { pitchShift.pitch = semitones; }, 80);
+    }
   }
 
-  slider.addEventListener('input', (e) => setPitch(Number(e.target.value)));
+  slider.addEventListener('input', (e) => setPitch(Number(e.target.value), { immediate: false }));
   presetButtons.forEach(btn => {
     btn.addEventListener('click', () => setPitch(Number(btn.dataset.pitch)));
   });
