@@ -151,3 +151,152 @@
 
     <div id="status">Micrófono apagado</div>
     <div class="hint">Usa auriculares para evitar el eco/retroalimentación.</div>
+  </div>
+
+  <audio id="outputAudio" autoplay playsinline></audio>
+
+<script src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
+<script>
+  let micStream = null;
+  let micSourceNode = null;
+  let pitchShift = null;
+  let eq = null;
+  let limiter = null;
+  let started = false;
+
+  const toggleBtn = document.getElementById('toggleBtn');
+  const statusEl = document.getElementById('status');
+  const slider = document.getElementById('slider');
+  const pitchValue = document.getElementById('pitchValue');
+  const presetButtons = [
+    document.getElementById('btnGrave'),
+    document.getElementById('btnNormal'),
+    document.getElementById('btnAguda'),
+  ];
+  const outputSelect = document.getElementById('outputSelect');
+  const outputAudio = document.getElementById('outputAudio');
+  let mediaStreamDest = null;
+
+  async function refreshOutputDevices() {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const outputs = devices.filter(d => d.kind === 'audiooutput');
+      const current = outputSelect.value;
+      outputSelect.innerHTML = '<option value="">Predeterminada</option>';
+      outputs.forEach((d, i) => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = d.label || `Dispositivo ${i + 1}`;
+        outputSelect.appendChild(opt);
+      });
+      if (outputs.some(d => d.deviceId === current)) outputSelect.value = current;
+    } catch (err) {
+      console.warn('No se pudieron listar los dispositivos de salida', err);
+    }
+  }
+
+  async function applyOutputDevice(deviceId) {
+    if (typeof outputAudio.setSinkId !== 'function') return; // no soportado (ej. Safari/Firefox)
+    try {
+      await outputAudio.setSinkId(deviceId || '');
+    } catch (err) {
+      console.warn('No se pudo cambiar la salida de audio', err);
+    }
+  }
+
+  outputSelect.addEventListener('change', () => applyOutputDevice(outputSelect.value));
+
+  async function startMic() {
+    await Tone.start();
+
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: false,
+      }
+    });
+
+    pitchShift = new Tone.PitchShift({ pitch: Number(slider.value), windowSize: 0.12 });
+    eq = new Tone.EQ3({ low: -2, mid: 2, high: 3 });
+    limiter = new Tone.Limiter(-3);
+
+    mediaStreamDest = Tone.getContext().rawContext.createMediaStreamDestination();
+    limiter.connect(mediaStreamDest);
+    outputAudio.srcObject = mediaStreamDest.stream;
+    await outputAudio.play().catch(() => {});
+
+    micSourceNode = Tone.getContext().rawContext.createMediaStreamSource(micStream);
+    Tone.connect(micSourceNode, pitchShift);
+    pitchShift.connect(eq);
+    eq.connect(limiter);
+
+    await refreshOutputDevices();
+    if (outputSelect.value) await applyOutputDevice(outputSelect.value);
+  }
+
+  function stopMic() {
+    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    micSourceNode = null;
+    if (pitchShift) { pitchShift.dispose(); pitchShift = null; }
+    if (eq) { eq.dispose(); eq = null; }
+    if (limiter) { limiter.dispose(); limiter = null; }
+    outputAudio.srcObject = null;
+    mediaStreamDest = null;
+  }
+
+  toggleBtn.addEventListener('click', async () => {
+    try {
+      if (!started) {
+        toggleBtn.disabled = true;
+        toggleBtn.textContent = 'Activando...';
+        await startMic();
+        started = true;
+        toggleBtn.textContent = 'Detener micrófono';
+        toggleBtn.classList.add('active');
+        statusEl.textContent = 'Micrófono activo';
+        statusEl.classList.add('on');
+      } else {
+        stopMic();
+        started = false;
+        toggleBtn.textContent = 'Activar micrófono';
+        toggleBtn.classList.remove('active');
+        statusEl.textContent = 'Micrófono apagado';
+        statusEl.classList.remove('on');
+      }
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = 'Error: no se pudo acceder al micrófono';
+      toggleBtn.textContent = 'Activar micrófono';
+    } finally {
+      toggleBtn.disabled = false;
+    }
+  });
+
+  let pitchDebounce = null;
+
+  function setPitch(semitones, { immediate = true } = {}) {
+    slider.value = semitones;
+    pitchValue.textContent = semitones;
+    presetButtons.forEach(btn => {
+      btn.classList.toggle('selected', Number(btn.dataset.pitch) === Number(semitones));
+    });
+
+    if (!pitchShift) return;
+
+    if (immediate) {
+      pitchShift.pitch = semitones;
+    } else {
+      clearTimeout(pitchDebounce);
+      pitchDebounce = setTimeout(() => { pitchShift.pitch = semitones; }, 80);
+    }
+  }
+
+  slider.addEventListener('input', (e) => setPitch(Number(e.target.value), { immediate: false }));
+  presetButtons.forEach(btn => {
+    btn.addEventListener('click', () => setPitch(Number(btn.dataset.pitch)));
+  });
+</script>
+</body>
+</html>
