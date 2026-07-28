@@ -89,6 +89,23 @@
     accent-color: var(--accent);
   }
 
+  .output-row { margin-bottom: 10px; text-align: left; }
+  .output-row label {
+    display: block;
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  select {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid #2a2f3d;
+    background: #1e2230;
+    color: var(--text);
+    font-size: 14px;
+  }
+
   #status {
     margin-top: 20px;
     font-size: 13px;
@@ -125,109 +142,12 @@
       <input type="range" id="slider" min="-12" max="12" step="1" value="0" />
     </div>
 
+    <div class="output-row">
+      <label for="outputSelect">Salida de audio</label>
+      <select id="outputSelect">
+        <option value="">Predeterminada</option>
+      </select>
+    </div>
+
     <div id="status">Micrófono apagado</div>
     <div class="hint">Usa auriculares para evitar el eco/retroalimentación.</div>
-  </div>
-
-<script src="https://cdn.jsdelivr.net/npm/tone@14.8.49/build/Tone.js"></script>
-<script>
-  let micStream = null;
-  let micSourceNode = null;
-  let pitchShift = null;
-  let eq = null;
-  let limiter = null;
-  let started = false;
-
-  const toggleBtn = document.getElementById('toggleBtn');
-  const statusEl = document.getElementById('status');
-  const slider = document.getElementById('slider');
-  const pitchValue = document.getElementById('pitchValue');
-  const presetButtons = [
-    document.getElementById('btnGrave'),
-    document.getElementById('btnNormal'),
-    document.getElementById('btnAguda'),
-  ];
-
-  async function startMic() {
-    await Tone.start();
-
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: false,
-      }
-    });
-
-    pitchShift = new Tone.PitchShift({ pitch: Number(slider.value), windowSize: 0.12 });
-    eq = new Tone.EQ3({ low: -2, mid: 2, high: 3 });
-    limiter = new Tone.Limiter(-3).toDestination();
-
-    micSourceNode = Tone.getContext().rawContext.createMediaStreamSource(micStream);
-    Tone.connect(micSourceNode, pitchShift);
-    pitchShift.connect(eq);
-    eq.connect(limiter);
-  }
-
-  function stopMic() {
-    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
-    micSourceNode = null;
-    if (pitchShift) { pitchShift.dispose(); pitchShift = null; }
-    if (eq) { eq.dispose(); eq = null; }
-    if (limiter) { limiter.dispose(); limiter = null; }
-  }
-
-  toggleBtn.addEventListener('click', async () => {
-    try {
-      if (!started) {
-        toggleBtn.disabled = true;
-        toggleBtn.textContent = 'Activando...';
-        await startMic();
-        started = true;
-        toggleBtn.textContent = 'Detener micrófono';
-        toggleBtn.classList.add('active');
-        statusEl.textContent = 'Micrófono activo';
-        statusEl.classList.add('on');
-      } else {
-        stopMic();
-        started = false;
-        toggleBtn.textContent = 'Activar micrófono';
-        toggleBtn.classList.remove('active');
-        statusEl.textContent = 'Micrófono apagado';
-        statusEl.classList.remove('on');
-      }
-    } catch (err) {
-      console.error(err);
-      statusEl.textContent = 'Error: no se pudo acceder al micrófono';
-      toggleBtn.textContent = 'Activar micrófono';
-    } finally {
-      toggleBtn.disabled = false;
-    }
-  });
-
-  let pitchDebounce = null;
-
-  function setPitch(semitones, { immediate = true } = {}) {
-    slider.value = semitones;
-    pitchValue.textContent = semitones;
-    presetButtons.forEach(btn => {
-      btn.classList.toggle('selected', Number(btn.dataset.pitch) === Number(semitones));
-    });
-
-    if (!pitchShift) return;
-
-    if (immediate) {
-      pitchShift.pitch = semitones;
-    } else {
-      clearTimeout(pitchDebounce);
-      pitchDebounce = setTimeout(() => { pitchShift.pitch = semitones; }, 80);
-    }
-  }
-
-  slider.addEventListener('input', (e) => setPitch(Number(e.target.value), { immediate: false }));
-  presetButtons.forEach(btn => {
-    btn.addEventListener('click', () => setPitch(Number(btn.dataset.pitch)));
-  });
-</script>
-</body>
-</html>
